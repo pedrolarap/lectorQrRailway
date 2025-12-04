@@ -1,76 +1,57 @@
-import mysql from 'mysql2/promise';
+// db.js
+const { Sequelize } = require('sequelize');
+require('dotenv').config(); // Cargar variables de entorno
 
-/**
- * Obtiene una variable de entorno, usando un valor de fallback si no existe.
- * @param {string} name - Nombre de la variable de entorno.
- * @param {any} [fallback=undefined] - Valor predeterminado si no se encuentra.
- * @returns {any} El valor de la variable de entorno o el fallback.
- */
-function getEnv(name, fallback = undefined) {
-  // Utilizamos el operador ?? (nullish coalescing) para manejar null o undefined,
-  // pero aseguramos que sea una cadena si es undefined.
-  return process.env[name] ?? fallback;
+// URL de la base de datos desde las env vars (Railway, Render, etc.)
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl) {
+  console.error('❌ DATABASE_URL no está definida en las variables de entorno');
+  process.exit(1);
 }
 
-/**
- * Intenta construir la configuración de la BD a partir de DATABASE_URL.
- * Si no se encuentra, devuelve null.
- */
-const configFromUrl = (() => {
-  const url = getEnv('DATABASE_URL');
-  if (!url) return null;
-  try {
-    const u = new URL(url);
-    // Verificar si el protocolo es mysql o similar
-    if (!u.protocol.startsWith('mysql')) {
-      return null;
-    }
-    return {
-      host: u.hostname,
-      port: Number(u.port || 3306),
-      user: u.username,
-      password: u.password,
-      database: u.pathname.replace(/^\//, '')
-    };
-  } catch (e) {
-    console.error("Error parsing DATABASE_URL:", e.message);
-    return null;
-  }
-})();
-
-// Creación del Pool de Conexiones
-const pool = mysql.createPool({
-  host: configFromUrl?.host      || getEnv('MYSQL_HOST')    || getEnv('MYSQLHOST')    || 'localhost',
-  port: configFromUrl?.port      || Number(getEnv('MYSQL_PORT') || getEnv('MYSQLPORT') || 3306),
-  user: configFromUrl?.user      || getEnv('MYSQL_USER')    || getEnv('MYSQLUSER')    || 'root',
-  password: configFromUrl?.password || getEnv('MYSQL_PASSWORD') || getEnv('MYSQLPASSWORD') || '',
-  database: configFromUrl?.database || getEnv('MYSQL_DATABASE') || getEnv('MYSQLDATABASE') || 'railway',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  timezone: 'Z' // Guarda todas las fechas/horas en UTC
+// Instancia de Sequelize (MySQL)
+const sequelize = new Sequelize(databaseUrl, {
+  dialect: 'mysql',
+  logging: process.env.NODE_ENV === 'development' ? console.log : false, // log solo en dev
+  dialectOptions: {
+    ssl: process.env.NODE_ENV === 'production'
+      ? {
+          require: true,
+          rejectUnauthorized: false,
+        }
+      : undefined,
+  },
+  pool: {
+    max: 5,
+    min: 0,
+    acquire: 30000,
+    idle: 10000,
+  },
+  retry: {
+    max: 3,
+    timeout: 60000,
+  },
 });
 
-/**
- * Ejecuta una consulta SQL en el pool y devuelve solo las filas.
- * Ideal para consultas que no requieren transacciones (SELECT, INSERT/UPDATE simples).
- *
- * @param {string} sql - La consulta SQL con placeholders (?).
- * @param {Array<any>} [params=[]] - Los parámetros para los placeholders.
- * @returns {Promise<Array<any>>} Las filas resultantes de la consulta.
- */
-export async function query(sql, params = []) {
-  // pool.execute garantiza la seguridad contra inyección SQL.
-  const [rows] = await pool.execute(sql, params);
-  return rows;
-}
+// Función para conectar a MySQL
+const connectToMySQL = async () => {
+  try {
+    await sequelize.authenticate();
+    console.log('✅ Conexión a MySQL exitosa (API QR)');
 
-/**
- * Adquiere una conexión individual del pool.
- * Necesario para operaciones que requieren transacciones (BEGIN, COMMIT, ROLLBACK).
- *
- * @returns {Promise<mysql.PoolConnection>} Una conexión de base de datos.
- */
-export async function getConnection() {
-  return pool.getConnection();
-}
+    // IMPORTANTE: en esta API NO sincronizamos automáticamente.
+    // Si alguna vez quieres usar sync en desarrollo, descomenta esto:
+    /*
+    if (process.env.NODE_ENV === 'development') {
+      await sequelize.sync({ alter: true });
+      console.log('✅ Modelos sincronizados (development)');
+    }
+    */
+  } catch (error) {
+    console.error('❌ Error al conectar a MySQL:', error.message);
+    process.exit(1);
+  }
+};
+
+module.exports = { sequelize, connectToMySQL };
