@@ -12,7 +12,12 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 // Middlewares
 app.use(helmet());
 app.use(express.json({ limit: '512kb' }));
-app.use(cors({ origin: CORS_ORIGIN === '*' ? true : CORS_ORIGIN, credentials: false }));
+app.use(
+  cors({
+    origin: CORS_ORIGIN === '*' ? true : CORS_ORIGIN,
+    credentials: false,
+  })
+);
 
 // Auth muy simple por API-KEY (Header: x-api-key)
 app.use((req, res, next) => {
@@ -30,6 +35,115 @@ app.get('/api/health', (req, res) => {
 });
 
 /**
+ * GET /api/attendees
+ * Lista asistentes para la UI del generador (id, full_name, organization, qr_code).
+ * Query params:
+ *   - active: 1|0 (por defecto 1)
+ *   - q: filtro por nombre/organización/correo
+ *   - limit: 1..5000 (por defecto 1000)
+ *   - offset: por defecto 0
+ */
+app.get('/api/attendees', async (req, res) => {
+  try {
+    const active = typeof req.query.active === 'undefined' ? 1 : Number(req.query.active) ? 1 : 0;
+    const q = (req.query.q || '').toString().trim();
+    let limit = Math.min(Math.max(parseInt(req.query.limit || '1000', 10), 1), 5000);
+    let offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+
+    const params = [];
+    const where = ['1=1'];
+
+    if (active === 0 || active === 1) {
+      where.push('a.active = ?');
+      params.push(active);
+    }
+
+    if (q) {
+      // búsqueda simple por nombre, organización o document_id
+      where.push('(a.full_name LIKE ? OR a.organization LIKE ? OR a.document_id LIKE ?)');
+      const like = `%${q}%`;
+      params.push(like, like, like);
+    }
+
+    params.push(limit, offset);
+
+    const rows = await query(
+      `
+      SELECT a.id, a.full_name, a.organization, a.qr_code
+      FROM attendees a
+      WHERE ${where.join(' AND ')}
+      ORDER BY a.full_name IS NULL, a.full_name
+      LIMIT ? OFFSET ?
+      `,
+      params
+    );
+
+    res.json(rows || []);
+  } catch (err) {
+    console.error('[attendees] error:', err);
+    res.status(500).json({ ok: false, error: 'Error interno' });
+  }
+});
+
+/**
+ * POST /api/attendees/ensure-qr
+ * Genera qr_code (uuid sin guiones) para asistentes que no tengan.
+ * Body (opcional): { only_active: boolean } -> por defecto true
+ */
+app.post('/api/attendees/ensure-qr', async (req, res) => {
+  try {
+    const onlyActive = typeof req.body?.only_active === 'boolean' ? req.body.only_active : true;
+
+    // Asegurar que exista la columna qr_code
+    await query(
+      `CREATE TABLE IF NOT EXISTS __noop__ (id INT);` // no-op para asegurar conexión
+    );
+    const col = await query(
+      `SELECT COUNT(*) AS n
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'attendees'
+         AND COLUMN_NAME = 'qr_code'`
+    );
+    if (!col?.[0]?.n) {
+      await query(`ALTER TABLE attendees ADD COLUMN qr_code VARCHAR(64) NULL`);
+    }
+
+    // Generar para faltantes
+    const cond = onlyActive ? 'AND active = 1' : '';
+    const result = await query(
+      `
+      UPDATE attendees
+         SET qr_code = REPLACE(UUID(), '-', '')
+       WHERE (qr_code IS NULL OR qr_code = '')
+         ${cond}
+      `
+    );
+
+    // Crear índice único si no existe
+    const idx = await query(
+      `SELECT COUNT(*) AS n
+       FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'attendees'
+         AND INDEX_NAME = 'uq_qr_code'`
+    );
+    if (!idx?.[0]?.n) {
+      try {
+        await query(`ALTER TABLE attendees ADD UNIQUE KEY uq_qr_code (qr_code)`);
+      } catch {
+        // si hay colisiones, las ignora; idealmente limpiar duplicados antes
+      }
+    }
+
+    res.json({ ok: true, updated: result?.affectedRows ?? 0 });
+  } catch (err) {
+    console.error('[ensure-qr] error:', err);
+    res.status(500).json({ ok: false, error: 'Error interno' });
+  }
+});
+
+/**
  * POST /api/lookup
  * Body: { qr: string }
  * Responde: datos del asistente y lista de eventos permitidos.
@@ -42,7 +156,7 @@ app.post('/api/lookup', async (req, res) => {
     }
 
     const attendee = await query(
-      `SELECT id, full_name, document_id, qr_code, active
+      `SELECT id, full_name, document_id, organization, qr_code, active
          FROM attendees
         WHERE qr_code = ?`,
       [qr]
@@ -71,9 +185,10 @@ app.post('/api/lookup', async (req, res) => {
         id: attendee[0].id,
         full_name: attendee[0].full_name,
         document_id: attendee[0].document_id,
-        qr_code: attendee[0].qr_code
+        organization: attendee[0].organization,
+        qr_code: attendee[0].qr_code,
       },
-      events
+      events,
     });
   } catch (err) {
     console.error('[lookup] error:', err);
@@ -133,7 +248,7 @@ app.post('/api/checkin', async (req, res) => {
       return res.json({
         ok: true,
         status: 'already_checked_in',
-        scanned_at: exists[0].scanned_at
+        scanned_at: exists[0].scanned_at,
       });
     }
 
