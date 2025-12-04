@@ -28,7 +28,7 @@ const pool = mysql.createPool({
   port: configFromUrl?.port     || Number(getEnv('MYSQL_PORT') || getEnv('MYSQLPORT') || 3306),
   user: configFromUrl?.user     || getEnv('MYSQL_USER')     || getEnv('MYSQLUSER')     || 'root',
   password: configFromUrl?.password || getEnv('MYSQL_PASSWORD') || getEnv('MYSQLPASSWORD') || '',
-  database: configFromUrl?.database || getEnv('MYSQL_DATABASE') || getEnv('MYSQLDATABASE') || 'qr_eventos',
+  database: configFromUrl?.database || getEnv('MYSQL_DATABASE') || getEnv('MYSQLDATABASE') || 'railway',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
