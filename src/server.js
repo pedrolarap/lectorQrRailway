@@ -70,45 +70,51 @@ app.get('/api/health', (req, res) => {
  * [NOTA: NO se aplica checkGlobalApiKey]
  */
 app.get('/api/attendees', async (req, res) => {
-  try {
-    const active = typeof req.query.active === 'undefined' ? 1 : Number(req.query.active) ? 1 : 0;
-    const q = (req.query.q || '').toString().trim();
-    let limit = Math.min(Math.max(parseInt(req.query.limit || '1000', 10), 1), 5000);
-    let offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+  try {
+    // 1. Conversión de Tipos
+    const active = typeof req.query.active === 'undefined' ? 1 : Number(req.query.active) ? 1 : 0;
+    const q = (req.query.q || '').toString().trim();
+    // Aseguramos que sean números enteros
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '1000', 10), 1), 5000);
+    const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
 
-    const params = [];
-    const where = ['1=1'];
+    // 2. Construcción Dinámica
+    const params = [];
+    const where = ['1=1'];
 
-    if (active === 0 || active === 1) {
-      where.push('a.active = ?');
-      params.push(active);
-    }
+    // Filtro 'active' (Añade 1 parámetro y 1 placeholder)
+    if (active === 0 || active === 1) {
+      where.push('a.active = ?');
+      params.push(active);
+    }
 
-    if (q) {
-      // búsqueda simple por nombre, organización o document_id
-      where.push('(a.full_name LIKE ? OR a.organization LIKE ? OR a.document_id LIKE ?)');
-      const like = `%${q}%`;
-      params.push(like, like, like);
-    }
+    // Filtro 'q' (Añade 3 parámetros y 3 placeholders si q existe)
+    if (q) {
+      where.push('(a.full_name LIKE ? OR a.organization LIKE ? OR a.document_id LIKE ?)');
+      const like = `%${q}%`;
+      params.push(like, like, like);
+    }
 
-    params.push(limit, offset);
+    // 3. Añadir Paginación (Añade 2 parámetros: LIMIT y OFFSET)
+    // El número de elementos en 'params' debe ser exactamente igual al número de '?'
+    params.push(limit, offset);
 
-    const rows = await query(
-      `
-      SELECT a.id, a.full_name, a.organization, a.qr_code
-      FROM attendees a
-      WHERE ${where.join(' AND ')}
-      ORDER BY a.full_name IS NULL, a.full_name
-      LIMIT ? OFFSET ?
-      `,
-      params
-    );
+    // 4. Construcción final de la consulta SQL
+    const sqlQuery = `
+      SELECT a.id, a.full_name, a.organization, a.qr_code
+      FROM attendees a
+      WHERE ${where.join(' AND ')}
+      ORDER BY a.full_name IS NULL, a.full_name
+      LIMIT ? OFFSET ? 
+      `;
 
-    res.json(rows || []);
-  } catch (err) {
-    console.error('[attendees] error:', err);
-    res.status(500).json({ ok: false, error: 'Error interno' });
-  }
+    const rows = await query(sqlQuery, params);
+
+    res.json(rows || []);
+  } catch (err) {
+    console.error('[attendees] error:', err);
+    res.status(500).json({ ok: false, error: 'Error interno' });
+  }
 });
 // ----------------------------------------------------------------------------------
 
