@@ -5,7 +5,7 @@ const { sequelize } = require('../db');
 const ListadoXlsx = sequelize.define(
   'ListadoXlsx',
   {
-    // Clave primaria: usamos el correo
+    // Usamos 'correo' como clave primaria (no hay columna id)
     correo: {
       type: DataTypes.STRING,
       allowNull: false,
@@ -23,9 +23,10 @@ const ListadoXlsx = sequelize.define(
       field: 'organizacion',
     },
 
+    // OJO: aquí va el nombre correcto 'tipo_de_organizacion'
     tipoOrganizacion: {
       type: DataTypes.STRING,
-      field: 'tipo_organizacion',
+      field: 'tipo_de_organizacion',
     },
 
     cargo: {
@@ -33,7 +34,7 @@ const ListadoXlsx = sequelize.define(
       field: 'cargo',
     },
 
-    // Flags originales de eventos del Excel
+    // Flags de inscripción a eventos
     comtelca: {
       type: DataTypes.STRING,
       field: 'comtelca',
@@ -44,14 +45,24 @@ const ListadoXlsx = sequelize.define(
     },
     desayuno: {
       type: DataTypes.STRING,
-      field: 'desayuno',
+      field: 'desayuno', // DIGI AMERICAS (DESAYUNO)
     },
     asamblea: {
       type: DataTypes.STRING,
       field: 'asamblea',
     },
 
-    // Columnas que agregaste para check-in
+    // Texto largo de eventos y tipo de participación
+    evento: {
+      type: DataTypes.TEXT,
+      field: 'evento',
+    },
+    participacion: {
+      type: DataTypes.STRING,
+      field: 'participacion',
+    },
+
+    // Columnas para check-in (las que agregamos)
     checkinComtelca: {
       type: DataTypes.BOOLEAN,
       field: 'checkin_comtelca',
