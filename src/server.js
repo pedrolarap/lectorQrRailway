@@ -19,7 +19,31 @@ app.use(
   })
 );
 
+// --- MODIFICACIÓN CLAVE: Middleware de Auth Global (Aplicado solo a rutas debajo) ---
 // Auth muy simple por API-KEY (Header: x-api-key)
+// Esta función se puede usar como middleware local para proteger rutas específicas
+const checkGlobalApiKey = (req, res, next) => {
+  if (!API_KEY) return next(); // sin API_KEY, no validamos (útil en pruebas)
+  const key = req.header('x-api-key');
+  if (key !== API_KEY) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+  next();
+};
+
+// Aplicar el middleware de autenticación a todas las rutas, EXCEPTO donde se anule explícitamente.
+// **IMPORTANTE:** Para la ruta /api/attendees, no usaremos app.use, sino el middleware localmente.
+// Si deseas proteger el 90% de tus rutas, puedes usar app.use(checkGlobalApiKey);
+// Pero para desactivar /api/attendees, lo aplicaremos de forma manual a las otras rutas:
+// En este código original, el middleware de autenticación se aplica GLOBALMENTE usando `app.use`
+// y se aplicaría a TODAS las rutas siguientes. Vamos a cambiar esto para controlarlo mejor.
+
+// --- Se mueve la lógica de autenticación global a una función reutilizable (checkGlobalApiKey)
+// --- y se aplica a las rutas que deben estar protegidas, dejando /api/attendees desprotegida.
+
+// La forma más limpia es hacer que solo las rutas sensibles usen el middleware.
+// Eliminamos el `app.use` global de autenticación:
+/*
 app.use((req, res, next) => {
   if (!API_KEY) return next(); // sin API_KEY, no validamos (útil en pruebas)
   const key = req.header('x-api-key');
@@ -28,20 +52,22 @@ app.use((req, res, next) => {
   }
   next();
 });
+*/
+// Y usamos 'checkGlobalApiKey' localmente en las rutas que necesitan protección.
 
-// Health
+// Health (No requiere autenticación)
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'qr-events-api', time: new Date().toISOString() });
 });
 
+// ----------------------------------------------------------------------------------
+// RUTA MODIFICADA (Punto clave)
+// Desactivamos la API Key para esta ruta, permitiendo el acceso público
+// ----------------------------------------------------------------------------------
 /**
  * GET /api/attendees
  * Lista asistentes para la UI del generador (id, full_name, organization, qr_code).
- * Query params:
- *   - active: 1|0 (por defecto 1)
- *   - q: filtro por nombre/organización/correo
- *   - limit: 1..5000 (por defecto 1000)
- *   - offset: por defecto 0
+ * [NOTA: NO se aplica checkGlobalApiKey]
  */
 app.get('/api/attendees', async (req, res) => {
   try {
@@ -84,16 +110,21 @@ app.get('/api/attendees', async (req, res) => {
     res.status(500).json({ ok: false, error: 'Error interno' });
   }
 });
+// ----------------------------------------------------------------------------------
 
+// ----------------------------------------------------------------------------------
+// RUTA PROTEGIDA (Se mantiene la API Key)
+// [NOTA: Se aplica checkGlobalApiKey]
+// ----------------------------------------------------------------------------------
 /**
  * POST /api/attendees/ensure-qr
  * Genera qr_code (uuid sin guiones) para asistentes que no tengan.
- * Body (opcional): { only_active: boolean } -> por defecto true
  */
-app.post('/api/attendees/ensure-qr', async (req, res) => {
+app.post('/api/attendees/ensure-qr', checkGlobalApiKey, async (req, res) => {
   try {
     const onlyActive = typeof req.body?.only_active === 'boolean' ? req.body.only_active : true;
 
+    // ... (resto de la lógica de ensure-qr) ...
     // Asegurar que exista la columna qr_code
     await query(
       `CREATE TABLE IF NOT EXISTS __noop__ (id INT);` // no-op para asegurar conexión
@@ -114,9 +145,9 @@ app.post('/api/attendees/ensure-qr', async (req, res) => {
     const result = await query(
       `
       UPDATE attendees
-         SET qr_code = REPLACE(UUID(), '-', '')
-       WHERE (qr_code IS NULL OR qr_code = '')
-         ${cond}
+          SET qr_code = REPLACE(UUID(), '-', '')
+        WHERE (qr_code IS NULL OR qr_code = '')
+          ${cond}
       `
     );
 
@@ -143,12 +174,16 @@ app.post('/api/attendees/ensure-qr', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------------
+// RUTA PROTEGIDA (Se mantiene la API Key)
+// [NOTA: Se aplica checkGlobalApiKey]
+// ----------------------------------------------------------------------------------
 /**
  * POST /api/lookup
  * Body: { qr: string }
  * Responde: datos del asistente y lista de eventos permitidos.
  */
-app.post('/api/lookup', async (req, res) => {
+app.post('/api/lookup', checkGlobalApiKey, async (req, res) => {
   try {
     const { qr } = req.body || {};
     if (!qr || typeof qr !== 'string') {
@@ -158,7 +193,7 @@ app.post('/api/lookup', async (req, res) => {
     const attendee = await query(
       `SELECT id, full_name, document_id, organization, qr_code, active
          FROM attendees
-        WHERE qr_code = ?`,
+       WHERE qr_code = ?`,
       [qr]
     );
 
@@ -171,7 +206,7 @@ app.post('/api/lookup', async (req, res) => {
 
     const events = await query(
       `SELECT e.id, e.name, e.starts_at, e.ends_at, e.location, e.active,
-              ae.permitted
+               ae.permitted
          FROM attendee_events ae
          JOIN events e ON e.id = ae.event_id
         WHERE ae.attendee_id = ? AND ae.permitted = 1 AND e.active = 1
@@ -196,12 +231,16 @@ app.post('/api/lookup', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------------
+// RUTA PROTEGIDA (Se mantiene la API Key)
+// [NOTA: Se aplica checkGlobalApiKey]
+// ----------------------------------------------------------------------------------
 /**
  * POST /api/checkin
  * Body: { qr: string, event_id: number, gate?: string }
  * Valida permiso; si no hay check-in previo, lo registra. Devuelve estado.
  */
-app.post('/api/checkin', async (req, res) => {
+app.post('/api/checkin', checkGlobalApiKey, async (req, res) => {
   const conn = await (await import('./db.js')).getConnection().catch(() => null);
   if (!conn) {
     return res.status(500).json({ ok: false, error: 'No hay conexión a la BD' });
@@ -267,6 +306,7 @@ app.post('/api/checkin', async (req, res) => {
     try { conn.release(); } catch {}
   }
 });
+// ----------------------------------------------------------------------------------
 
 app.listen(PORT, () => {
   console.log(`QR API escuchando en :${PORT}`);
