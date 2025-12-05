@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
         nombreCompleto: row.nombrecompleto,
         correo: row.correo,
         pais: row.pais,
-        origen: row.origen,                 // 👈 NUEVO
+        origen: row.origen,
         cargo: row.cargo,
         organizacion: row.organizacion,
         tipo_de_organizacion: row.tipo_de_organizacion,
@@ -49,12 +49,17 @@ router.post('/', async (req, res) => {
       nombreCompleto,
       correo,
       pais,
-      origen,           // 👈 NUEVO
+      origen,
       cargo,
       comtelca,
       cumbre,
       desayuno,
       asamblea,
+      // NUEVO: check-ins manuales
+      checkinComtelca,
+      checkinCumbre,
+      checkinDesayuno,
+      checkinAsamblea,
     } = req.body;
 
     if (!nombreCompleto || !correo) {
@@ -73,12 +78,17 @@ router.post('/', async (req, res) => {
       nombrecompleto: nombreCompleto,
       correo,
       pais,
-      origen,          // 👈 NUEVO
+      origen,
       cargo,
       comtelca: comtelca ? 'X' : '',
       cumbre:   cumbre   ? 'X' : '',
       desayuno: desayuno ? 'X' : '',
-      asamblea: asamblea ? 'X' : ''
+      asamblea: asamblea ? 'X' : '',
+      // guardar check-ins (0/1)
+      checkin_comtelca:  checkinComtelca  ? 1 : 0,
+      checkin_cumbre:    checkinCumbre    ? 1 : 0,
+      checkin_desayuno:  checkinDesayuno  ? 1 : 0,
+      checkin_asamblea:  checkinAsamblea  ? 1 : 0,
     });
 
     res.status(201).json({ ok:true, usuario:nuevo.toJSON() });
@@ -102,24 +112,35 @@ router.put('/:correo', async (req, res) => {
       nombreCompleto,
       correo,
       pais,
-      origen,          // 👈 NUEVO
+      origen,
       cargo,
       comtelca,
       cumbre,
       desayuno,
       asamblea,
+      // NUEVO: check-ins manuales
+      checkinComtelca,
+      checkinCumbre,
+      checkinDesayuno,
+      checkinAsamblea,
     } = req.body;
 
     if (nombreCompleto !== undefined) usuario.nombrecompleto = nombreCompleto;
     if (correo        !== undefined) usuario.correo        = correo;
     if (pais          !== undefined) usuario.pais          = pais;
-    if (origen        !== undefined) usuario.origen        = origen;   // 👈 NUEVO
+    if (origen        !== undefined) usuario.origen        = origen;
     if (cargo         !== undefined) usuario.cargo         = cargo;
 
     if (comtelca !== undefined) usuario.comtelca = comtelca ? 'X' : '';
     if (cumbre   !== undefined) usuario.cumbre   = cumbre   ? 'X' : '';
     if (desayuno !== undefined) usuario.desayuno = desayuno ? 'X' : '';
     if (asamblea !== undefined) usuario.asamblea = asamblea ? 'X' : '';
+
+    // guardar check-ins
+    if (checkinComtelca !== undefined) usuario.checkin_comtelca  = checkinComtelca  ? 1 : 0;
+    if (checkinCumbre   !== undefined) usuario.checkin_cumbre    = checkinCumbre    ? 1 : 0;
+    if (checkinDesayuno !== undefined) usuario.checkin_desayuno  = checkinDesayuno  ? 1 : 0;
+    if (checkinAsamblea !== undefined) usuario.checkin_asamblea  = checkinAsamblea  ? 1 : 0;
 
     await usuario.save();
 
@@ -131,3 +152,4 @@ router.put('/:correo', async (req, res) => {
 });
 
 module.exports = router;
+
