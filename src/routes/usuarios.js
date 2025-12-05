@@ -151,5 +151,27 @@ router.put('/:correo', async (req, res) => {
   }
 });
 
-module.exports = router;
+// DELETE /api/usuarios/:correo  -> eliminar registro
+router.delete('/:correo', async (req, res) => {
+  try {
+    const correoParam = decodeURIComponent(req.params.correo);
 
+    const usuario = await ListadoXlsx.findOne({ where:{ correo: correoParam } });
+    if (!usuario) {
+      return res.status(404).json({ ok:false, error:'Usuario no encontrado' });
+    }
+
+    await usuario.destroy();
+
+    return res.json({
+      ok: true,
+      deleted: true,
+      correo: correoParam
+    });
+  } catch (err) {
+    console.error('[DELETE /api/usuarios/:correo] Error:', err);
+    res.status(500).json({ ok:false, error:'Error interno del servidor' });
+  }
+});
+
+module.exports = router;
