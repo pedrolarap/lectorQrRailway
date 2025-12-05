@@ -6,7 +6,8 @@ const ListadoXlsx = sequelize.define('ListadoXlsx', {
   correo: { type: DataTypes.STRING, primaryKey: true },
   nombrecompleto: DataTypes.STRING,
   pais: DataTypes.STRING,
-  origen: DataTypes.STRING, 
+  origen: DataTypes.STRING,                 // 👈 NUEVO CAMPO
+
   organizacion: DataTypes.STRING,
   tipo_de_organizacion: DataTypes.STRING,
   cargo: DataTypes.STRING,
@@ -16,8 +17,8 @@ const ListadoXlsx = sequelize.define('ListadoXlsx', {
   desayuno: DataTypes.STRING,
   asamblea: DataTypes.STRING,
 
-  participacion: DataTypes.TEXT,
-  evento: DataTypes.TEXT,
+  participacion: DataTypes.STRING,
+  evento: DataTypes.STRING,
 
   checkin_comtelca: DataTypes.TINYINT,
   checkin_cumbre: DataTypes.TINYINT,
