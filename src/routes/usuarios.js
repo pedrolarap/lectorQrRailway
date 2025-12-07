@@ -2,7 +2,11 @@
 const express = require('express');
 const router = express.Router();
 const ListadoXlsx = require('../models/ListadoXlsx');
-const QRCode = require('qrcode'); // 👈 NUEVO: para generar códigos QR
+const QRCode = require('qrcode'); // para generar códigos QR
+
+// =======================================================
+// HELPERS
+// =======================================================
 
 // Función helper para armar el objeto de respuesta de usuario
 function mapRowToUsuario(row) {
@@ -29,16 +33,70 @@ function mapRowToUsuario(row) {
   };
 }
 
-// Función helper para construir el payload del QR
-// ⚠️ Aquí usamos SOLO el correo, para que tu escáner pueda seguir
-// usando ese valor y llamar a /api/eventos/preview con { qr: correo }.
-function buildQrPayloadFromUsuario(usuarioRow) {
-  return usuarioRow.correo;
+// Asegúrate de que en tu modelo/tabla exista una columna TEXT llamada `qr_payload`
+// para guardar el contenido textual del QR (el JSON).
+
+// Extrae eventos a partir de flags/participación
+function extractEventosFromSource({
+  comtelca,
+  cumbre,
+  desayuno,
+  asamblea,
+  participacion,
+  evento
+}) {
+  const eventos = [];
+  const participaStr = String(participacion || evento || '').toUpperCase();
+  const isX = (v) => String(v || '').trim().toUpperCase() === 'X';
+
+  if (isX(comtelca) || participaStr.includes('COMTELCA')) eventos.push('COMTELCA');
+  if (isX(cumbre)   || participaStr.includes('CUMBRE'))   eventos.push('CUMBRE');
+  if (isX(desayuno) || participaStr.includes('DESAYUNO')) eventos.push('DESAYUNO');
+  if (isX(asamblea) || participaStr.includes('ASAMBLEA')) eventos.push('ASAMBLEA');
+
+  return eventos;
 }
 
-// Función helper para generar DataURL de QR (para respuestas JSON)
+// Construir el payload textual del QR a partir de los datos de usuario
+// 👉 Aquí metemos nombre, correo, país, origen y eventos.
+function buildQrPayload({ nombreCompleto, correo, pais, origen, eventos }) {
+  const payloadObj = {
+    nombre: nombreCompleto || '',
+    correo: correo || '',
+    pais: pais || null,
+    origen: origen || null,
+    eventos: Array.isArray(eventos) ? eventos : []
+  };
+
+  // Usamos JSON para que sea parseable desde el front
+  return JSON.stringify(payloadObj);
+}
+
+// Construir payload del QR a partir de un registro de la BD (Sequelize instance o JSON)
+function buildQrPayloadFromUsuario(record) {
+  const row = record.toJSON ? record.toJSON() : record;
+  const usuarioDto = mapRowToUsuario(row);
+
+  const eventos = extractEventosFromSource({
+    comtelca: row.comtelca,
+    cumbre: row.cumbre,
+    desayuno: row.desayuno,
+    asamblea: row.asamblea,
+    participacion: row.participacion,
+    evento: row.evento
+  });
+
+  return buildQrPayload({
+    nombreCompleto: usuarioDto.nombreCompleto,
+    correo: usuarioDto.correo,
+    pais: usuarioDto.pais,
+    origen: usuarioDto.origen,
+    eventos
+  });
+}
+
+// Genera DataURL de QR (para respuestas JSON)
 async function generateQrDataUrl(payload) {
-  // Puedes ajustar tamaño / margen si quieres
   return QRCode.toDataURL(payload, {
     errorCorrectionLevel: 'M',
     type: 'image/png',
@@ -47,7 +105,7 @@ async function generateQrDataUrl(payload) {
   });
 }
 
-// Función helper para generar buffer PNG de QR (para descargas)
+// Genera buffer PNG de QR (para descargas)
 async function generateQrPngBuffer(payload) {
   return QRCode.toBuffer(payload, {
     errorCorrectionLevel: 'M',
@@ -55,6 +113,17 @@ async function generateQrPngBuffer(payload) {
     margin: 1,
     scale: 8
   });
+}
+
+// Garantiza que el registro tenga qr_payload; si no, lo genera y lo guarda.
+async function ensureQrPayloadForUsuario(instance) {
+  if (instance.qr_payload) {
+    return instance.qr_payload;
+  }
+  const qrPayload = buildQrPayloadFromUsuario(instance);
+  instance.qr_payload = qrPayload;
+  await instance.save();
+  return qrPayload;
 }
 
 // =======================================================
@@ -79,8 +148,9 @@ router.get('/', async (req, res) => {
 });
 
 // =======================================================
-// GET /api/usuarios/:correo/qr.png  -> genera y devuelve el PNG del QR
-// Usa el correo como payload del QR
+// GET /api/usuarios/:correo/qr.png
+// -> devuelve PNG del QR
+// -> si no existe qr_payload en BD, lo genera, lo guarda y luego lo usa
 // =======================================================
 router.get('/:correo/qr.png', async (req, res) => {
   try {
@@ -91,7 +161,8 @@ router.get('/:correo/qr.png', async (req, res) => {
       return res.status(404).json({ ok:false, error:'Usuario no encontrado' });
     }
 
-    const qrPayload = buildQrPayloadFromUsuario(usuario); // normalmente el correo
+    // Asegurarnos de tener qr_payload en la BD (lazy-generate)
+    const qrPayload = await ensureQrPayloadForUsuario(usuario);
     const pngBuffer = await generateQrPngBuffer(qrPayload);
 
     res.setHeader('Content-Type', 'image/png');
@@ -121,7 +192,7 @@ router.post('/', async (req, res) => {
       cumbre,
       desayuno,
       asamblea,
-      // NUEVO: check-ins manuales
+      // check-ins manuales
       checkinComtelca,
       checkinCumbre,
       checkinDesayuno,
@@ -140,6 +211,26 @@ router.post('/', async (req, res) => {
       return res.status(409).json({ ok:false, error:'Ya existe un usuario con ese correo' });
     }
 
+    // 1) Determinar eventos a partir de lo que viene del FRONT
+    const eventos = extractEventosFromSource({
+      comtelca,
+      cumbre,
+      desayuno,
+      asamblea,
+      participacion: null,
+      evento: null
+    });
+
+    // 2) Construir payload del QR con los datos del FRONT
+    const qrPayload = buildQrPayload({
+      nombreCompleto,
+      correo,
+      pais,
+      origen,
+      eventos
+    });
+
+    // 3) Crear el registro en la BD (incluyendo qr_payload)
     const nuevo = await ListadoXlsx.create({
       nombrecompleto: nombreCompleto,
       correo,
@@ -150,32 +241,29 @@ router.post('/', async (req, res) => {
       cumbre:   cumbre   ? 'X' : '',
       desayuno: desayuno ? 'X' : '',
       asamblea: asamblea ? 'X' : '',
-      // guardar check-ins (0/1)
       checkin_comtelca:  checkinComtelca  ? 1 : 0,
       checkin_cumbre:    checkinCumbre    ? 1 : 0,
       checkin_desayuno:  checkinDesayuno  ? 1 : 0,
       checkin_asamblea:  checkinAsamblea  ? 1 : 0,
+      qr_payload: qrPayload, // 👈 guardamos el payload del QR en la BD
     });
 
     const usuarioJson = nuevo.toJSON();
     const usuarioDto  = mapRowToUsuario(usuarioJson);
 
-    // 👉 Payload del QR (el texto que se codifica en el código)
-    const qrPayload = buildQrPayloadFromUsuario(usuarioJson);
-
-    // 👉 DataURL del QR para usarlo directamente en el frontend (<img src="...">)
+    // 4) DataURL del QR para mostrar en el front
     const qrDataUrl = await generateQrDataUrl(qrPayload);
 
-    // 👉 URL para descargar el PNG desde la API
+    // 5) URL para descargar el PNG desde la API
     const downloadUrl = `/api/usuarios/${encodeURIComponent(correo)}/qr.png`;
 
     res.status(201).json({
       ok: true,
       usuario: usuarioDto,
       qr: {
-        payload: qrPayload,
-        dataUrl: qrDataUrl,
-        downloadUrl
+        payload: qrPayload,   // JSON con nombre, correo, pais, origen, eventos
+        dataUrl: qrDataUrl,   // para <img src="...">
+        downloadUrl           // para descarga
       }
     });
   } catch (err) {
@@ -186,6 +274,8 @@ router.post('/', async (req, res) => {
 
 // =======================================================
 // PUT /api/usuarios/:correo  -> editar existente
+//  - Actualiza datos del usuario
+//  - Regenera y guarda el qr_payload con los datos actualizados
 // =======================================================
 router.put('/:correo', async (req, res) => {
   try {
@@ -206,7 +296,7 @@ router.put('/:correo', async (req, res) => {
       cumbre,
       desayuno,
       asamblea,
-      // NUEVO: check-ins manuales
+      // check-ins manuales
       checkinComtelca,
       checkinCumbre,
       checkinDesayuno,
@@ -224,12 +314,17 @@ router.put('/:correo', async (req, res) => {
     if (desayuno !== undefined) usuario.desayuno = desayuno ? 'X' : '';
     if (asamblea !== undefined) usuario.asamblea = asamblea ? 'X' : '';
 
-    // guardar check-ins
     if (checkinComtelca !== undefined) usuario.checkin_comtelca  = checkinComtelca  ? 1 : 0;
     if (checkinCumbre   !== undefined) usuario.checkin_cumbre    = checkinCumbre    ? 1 : 0;
     if (checkinDesayuno !== undefined) usuario.checkin_desayuno  = checkinDesayuno  ? 1 : 0;
     if (checkinAsamblea !== undefined) usuario.checkin_asamblea  = checkinAsamblea  ? 1 : 0;
 
+    // Guardamos primero los cambios
+    await usuario.save();
+
+    // Regenerar y actualizar el payload del QR con los datos actualizados
+    const qrPayload = buildQrPayloadFromUsuario(usuario);
+    usuario.qr_payload = qrPayload;
     await usuario.save();
 
     const usuarioDto = mapRowToUsuario(usuario.toJSON());
@@ -267,4 +362,3 @@ router.delete('/:correo', async (req, res) => {
 });
 
 module.exports = router;
-
